@@ -10,7 +10,7 @@
  *   SurrealDB running at http://localhost:8000
  */
 
-const SURREAL_URL = Deno.env.get("SURREAL_URL") || "http://localhost:8000";
+const SURREAL_URL = Deno.env.get("SURREAL_URL") || "http://localhost:8001";
 const SURREAL_NS = "matchmaking";
 const SURREAL_DB = "fruits";
 const SURREAL_USER = "root";
@@ -35,8 +35,8 @@ async function surrealQuery(sql: string): Promise<unknown[]> {
   }
 
   const results = await response.json();
-  // Filter out the USE statement result
-  return results.filter((r: { type?: string }) => r.type !== null || r.status === "ERR");
+  // Skip the first result (USE statement)
+  return results.slice(1);
 }
 
 async function main() {

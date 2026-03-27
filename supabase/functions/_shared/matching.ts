@@ -8,7 +8,7 @@
  * - Each preference criterion is evaluated independently
  * - Boolean preferences: exact match = 1.0, mismatch = 0.0
  * - Numeric range preferences: in range = 1.0, out of range = decaying score based on distance
- * - Shine factor: match = 1.0, no match = 0.0
+ * - Shine factor: match = 1.0, partial credit based on proximity on the shine scale
  * - Missing attribute (null): scored as 0.5 (neutral - we don't know)
  * - Omitted preference: not counted (any value acceptable)
  *
@@ -16,7 +16,7 @@
  * Mutual score = geometric mean of both directional scores (rewards balance).
  */
 
-import type { Fruit, FruitAttributes, FruitPreferences, ShineFactor, NumberRange } from "./generateFruit.ts";
+import type { FruitAttributes, FruitPreferences, ShineFactor, NumberRange } from "./generateFruit.ts";
 
 export interface MatchCandidate {
   id: string;
@@ -43,14 +43,21 @@ export interface CriterionScore {
   reason: string;
 }
 
+interface RawCriterionScore {
+  criterion: string;
+  score: number;
+  reason: string;
+}
+
 /**
- * Score how well a set of attributes satisfies a set of preferences
+ * Score how well a set of attributes satisfies a set of preferences.
+ * Returns raw scores without direction (direction is assigned by the caller).
  */
 function scorePreferenceSatisfaction(
   attributes: FruitAttributes,
   preferences: FruitPreferences
-): { score: number; breakdown: CriterionScore[] } {
-  const breakdown: CriterionScore[] = [];
+): { score: number; breakdown: RawCriterionScore[] } {
+  const breakdown: RawCriterionScore[] = [];
   const scores: number[] = [];
 
   // Size preference
@@ -81,27 +88,16 @@ function scorePreferenceSatisfaction(
       const prefValue = preferences[key as keyof FruitPreferences];
 
       if (attrValue === null || attrValue === undefined) {
-        breakdown.push({
-          criterion: label,
-          direction: "forward",
-          score: 0.5,
-          reason: `${label} unknown (null attribute)`,
-        });
+        breakdown.push({ criterion: label, score: 0.5, reason: `${label} unknown (null attribute)` });
         scores.push(0.5);
       } else if (attrValue === prefValue) {
-        breakdown.push({
-          criterion: label,
-          direction: "forward",
-          score: 1.0,
-          reason: `${label} matches preference`,
-        });
+        breakdown.push({ criterion: label, score: 1.0, reason: `${label} matches preference` });
         scores.push(1.0);
       } else {
         breakdown.push({
           criterion: label,
-          direction: "forward",
           score: 0.0,
-          reason: `${label} does not match preference (has: ${attrValue}, wants: ${prefValue})`,
+          reason: `${label} does not match (has: ${attrValue}, wants: ${prefValue})`,
         });
         scores.push(0.0);
       }
@@ -125,20 +121,17 @@ function scorePreferenceSatisfaction(
 }
 
 /**
- * Score a numeric attribute against a range preference
+ * Score a numeric attribute against a range preference.
+ * Uses exponential decay for out-of-range values with a fixed scale constant
+ * derived from the range span (or a sensible default for open-ended ranges).
  */
 function scoreNumericRange(
   value: number | null,
   range: NumberRange,
   criterion: string
-): CriterionScore {
+): RawCriterionScore {
   if (value === null) {
-    return {
-      criterion,
-      direction: "forward",
-      score: 0.5,
-      reason: `${criterion} unknown`,
-    };
+    return { criterion, score: 0.5, reason: `${criterion} unknown` };
   }
 
   const { min, max } = range;
@@ -147,7 +140,6 @@ function scoreNumericRange(
   if ((min === undefined || value >= min) && (max === undefined || value <= max)) {
     return {
       criterion,
-      direction: "forward",
       score: 1.0,
       reason: `${criterion} ${value} is within preferred range [${min ?? "-inf"}, ${max ?? "+inf"}]`,
     };
@@ -155,23 +147,20 @@ function scoreNumericRange(
 
   // Out of range - calculate decay based on distance
   let distance = 0;
-  let rangeSize = 1;
-
   if (min !== undefined && value < min) {
     distance = min - value;
-    rangeSize = min;
   } else if (max !== undefined && value > max) {
     distance = value - max;
-    rangeSize = max;
   }
 
-  // Exponential decay: score = e^(-distance/scale)
-  const scale = rangeSize * 0.3; // 30% of range boundary as scale
-  const score = Math.max(0, Math.exp(-distance / Math.max(scale, 1)));
+  // Use range span as scale basis, or a sensible default for open-ended ranges
+  const rangeSpan = (min !== undefined && max !== undefined) ? (max - min) : 10;
+  const scale = Math.max(rangeSpan * 0.3, 1); // at least 1 to avoid division issues
+
+  const score = Math.max(0, Math.exp(-distance / scale));
 
   return {
     criterion,
-    direction: "forward",
     score: Math.round(score * 100) / 100,
     reason: `${criterion} ${value} is outside preferred range [${min ?? "-inf"}, ${max ?? "+inf"}] (distance: ${distance.toFixed(1)})`,
   };
@@ -183,14 +172,9 @@ function scoreNumericRange(
 function scoreShinePreference(
   value: ShineFactor | null,
   preference: ShineFactor | ShineFactor[]
-): CriterionScore {
+): RawCriterionScore {
   if (value === null) {
-    return {
-      criterion: "shineFactor",
-      direction: "forward",
-      score: 0.5,
-      reason: "shine factor unknown",
-    };
+    return { criterion: "shineFactor", score: 0.5, reason: "shine factor unknown" };
   }
 
   const acceptable = Array.isArray(preference) ? preference : [preference];
@@ -198,7 +182,6 @@ function scoreShinePreference(
   if (acceptable.includes(value)) {
     return {
       criterion: "shineFactor",
-      direction: "forward",
       score: 1.0,
       reason: `shine factor "${value}" matches preference`,
     };
@@ -215,14 +198,14 @@ function scoreShinePreference(
 
   return {
     criterion: "shineFactor",
-    direction: "forward",
     score: Math.round(score * 100) / 100,
     reason: `shine factor "${value}" not in preferred [${acceptable.join(", ")}] (distance: ${closestDist})`,
   };
 }
 
 /**
- * Calculate match scores between an incoming fruit and all candidates
+ * Calculate match scores between an incoming fruit and all candidates.
+ * Returns candidates sorted by mutual score (descending).
  */
 export function calculateMatches(
   incoming: { attributes: FruitAttributes; preferences: FruitPreferences },
@@ -242,7 +225,7 @@ export function calculateMatches(
           ? 0
           : Math.sqrt(forward.score * reverse.score);
 
-      const breakdown = [
+      const breakdown: CriterionScore[] = [
         ...forward.breakdown.map((b) => ({ ...b, direction: "forward" as const })),
         ...reverse.breakdown.map((b) => ({ ...b, direction: "reverse" as const })),
       ];

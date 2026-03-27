@@ -1,3 +1,5 @@
+"use client";
+
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import type { ConversationResponse, StatsResponse } from "./api";
@@ -14,7 +16,7 @@ import {
 export interface ConversationEntry {
   id: string;
   type: "apple" | "orange";
-  response: ConversationResponse;
+  response: ConversationResponse | null;
   timestamp: string;
   status: "loading" | "complete" | "error";
   error?: string;
@@ -33,19 +35,13 @@ export interface ChatMessage {
 }
 
 interface MatchmakingState {
-  // Conversations
   conversations: ConversationEntry[];
   activeConversationId: string | null;
-
-  // Stats
   stats: StatsResponse | null;
   statsLoading: boolean;
-
-  // UI state
   isLoading: boolean;
   error: string | null;
 
-  // Actions
   startConversation: (type: "apple" | "orange") => Promise<void>;
   setActiveConversation: (id: string | null) => void;
   refreshStats: () => Promise<void>;
@@ -69,7 +65,7 @@ export const useMatchmakingStore = create<MatchmakingState>()(
         const placeholder: ConversationEntry = {
           id,
           type,
-          response: null as unknown as ConversationResponse,
+          response: null,
           timestamp: new Date().toISOString(),
           status: "loading",
         };
@@ -94,7 +90,7 @@ export const useMatchmakingStore = create<MatchmakingState>()(
             isLoading: false,
           }));
 
-          // Auto-refresh stats after a new conversation
+          // Refresh stats in background (fire-and-forget is intentional here)
           get().refreshStats();
         } catch (err) {
           const message =
@@ -114,6 +110,7 @@ export const useMatchmakingStore = create<MatchmakingState>()(
       setActiveConversation: (id) => set({ activeConversationId: id }),
 
       refreshStats: async () => {
+        if (get().statsLoading) return; // Debounce concurrent calls
         set({ statsLoading: true });
         try {
           const stats = await fetchStats();
@@ -131,7 +128,7 @@ export const useMatchmakingStore = create<MatchmakingState>()(
 );
 
 /**
- * Convert a conversation into a sequence of chat messages for visualization
+ * Convert a completed conversation into a sequence of chat messages for visualization.
  */
 export function conversationToChatMessages(
   entry: ConversationEntry
@@ -140,7 +137,6 @@ export function conversationToChatMessages(
 
   const messages: ChatMessage[] = [];
   const { response } = entry;
-  const fruitEmoji = response.fruit.type === "apple" ? "🍎" : "🍊";
 
   // System introduction
   messages.push({
@@ -196,7 +192,7 @@ export function conversationToChatMessages(
     });
   }
 
-  // LLM narrative
+  // Narrative
   messages.push({
     id: `${entry.id}-narrative`,
     conversationId: entry.id,

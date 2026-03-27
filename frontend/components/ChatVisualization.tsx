@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   useMatchmakingStore,
@@ -21,45 +21,60 @@ export function ChatVisualization() {
   const startConversation = useMatchmakingStore((s) => s.startConversation);
   const setActive = useMatchmakingStore((s) => s.setActiveConversation);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [visibleMessages, setVisibleMessages] = useState<ChatMessage[]>([]);
+  const [visibleCount, setVisibleCount] = useState(0);
+  // Track which conversations have already been animated
+  const animatedRef = useRef<Set<string>>(new Set());
 
-  const allMessages = activeConversation
-    ? conversationToChatMessages(activeConversation)
-    : [];
+  const allMessages = useMemo(
+    () => (activeConversation ? conversationToChatMessages(activeConversation) : []),
+    [activeConversation?.id, activeConversation?.status, activeConversation?.response]
+  );
 
-  // Animate messages appearing one by one
+  // Animate messages appearing one by one, but only once per conversation
   useEffect(() => {
     if (allMessages.length === 0) {
-      setVisibleMessages([]);
+      setVisibleCount(0);
       return;
     }
 
-    setVisibleMessages([]);
+    const convId = activeConversation?.id;
+    if (!convId) return;
+
+    // If we've already animated this conversation, show all messages immediately
+    if (animatedRef.current.has(convId)) {
+      setVisibleCount(allMessages.length);
+      return;
+    }
+
+    // Animate sequentially
+    setVisibleCount(0);
     let i = 0;
     const timer = setInterval(() => {
-      if (i < allMessages.length) {
-        setVisibleMessages((prev) => [...prev, allMessages[i]]);
-        i++;
-      } else {
+      i++;
+      setVisibleCount(i);
+      if (i >= allMessages.length) {
         clearInterval(timer);
+        animatedRef.current.add(convId);
       }
     }, 600);
 
     return () => clearInterval(timer);
-  }, [activeConversation?.id, activeConversation?.status]);
+  }, [activeConversation?.id, activeConversation?.status, allMessages.length]);
+
+  const visibleMessages = allMessages.slice(0, visibleCount);
 
   // Auto-scroll
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [visibleMessages]);
+  }, [visibleCount]);
 
   return (
     <div className="flex h-[600px] flex-col rounded-xl border border-[var(--color-border)] bg-[var(--color-card)]">
       {/* Conversation Tabs */}
       <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-2 overflow-x-auto">
-        {conversations.slice(0, 10).map((conv) => (
+        {conversations.slice(0, 10).map((conv, idx) => (
           <button
             key={conv.id}
             onClick={() => setActive(conv.id)}
@@ -75,7 +90,7 @@ export function ChatVisualization() {
                 ? "Loading..."
                 : conv.status === "error"
                 ? "Error"
-                : `#${conversations.indexOf(conv) + 1}`}
+                : `#${idx + 1}`}
             </span>
           </button>
         ))}
@@ -158,7 +173,6 @@ export function ChatVisualization() {
 function MessageBubble({ message }: { message: ChatMessage }) {
   const isSystem = message.role === "system";
   const isFruit = message.role === "fruit";
-  const isMatchmaker = message.role === "matchmaker";
 
   if (isSystem) {
     return (
@@ -178,17 +192,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       : "bg-orange-100 dark:bg-orange-950/40 border-orange-200 dark:border-orange-900"
     : "bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-900";
 
-  const emoji = isFruit
-    ? isApple
-      ? "🍎"
-      : "🍊"
-    : "🍐";
-
-  const label = isFruit
-    ? isApple
-      ? "Apple"
-      : "Orange"
-    : "Matchmaker";
+  const emoji = isFruit ? (isApple ? "🍎" : "🍊") : "🍐";
+  const label = isFruit ? (isApple ? "Apple" : "Orange") : "Matchmaker";
 
   return (
     <div className={`flex ${align}`}>

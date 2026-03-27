@@ -1,17 +1,21 @@
 import "@supabase/functions-js/edge-runtime.d.ts";
-import { getStats, getMatches, getFruits } from "../_shared/surrealdb.ts";
+import { getMatches, getFruits } from "../_shared/surrealdb.ts";
 
 /**
  * Stats & Dashboard Data Edge Function
  *
  * Returns aggregated metrics, recent matches, and analytics data
  * for the frontend dashboard.
+ *
+ * All aggregation is done from the matches + fruits data directly
+ * (single source of truth, no redundant count queries).
  */
 
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "http://localhost:3000";
+
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 Deno.serve(async (req) => {
@@ -20,14 +24,14 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const [stats, matches, apples, oranges] = await Promise.all([
-      getStats(),
-      getMatches(),
+    // Fetch all data in parallel (single round of queries)
+    const [matches, apples, oranges] = await Promise.all([
+      getMatches(200),
       getFruits("apple"),
       getFruits("orange"),
     ]);
 
-    // Calculate score distribution buckets
+    // Score distribution buckets
     const scoreBuckets = [
       { label: "0-20%", min: 0, max: 0.2, count: 0 },
       { label: "20-40%", min: 0.2, max: 0.4, count: 0 },
@@ -45,27 +49,28 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Calculate average scores
-    const avgMutual =
-      matches.length > 0
-        ? matches.reduce((s, m) => s + m.mutualScore, 0) / matches.length
-        : 0;
-    const avgForward =
-      matches.length > 0
-        ? matches.reduce((s, m) => s + m.appleToOrangeScore, 0) / matches.length
-        : 0;
-    const avgReverse =
-      matches.length > 0
-        ? matches.reduce((s, m) => s + m.orangeToAppleScore, 0) / matches.length
-        : 0;
+    // Compute averages from matches
+    const avgMutual = matches.length > 0
+      ? matches.reduce((s, m) => s + m.mutualScore, 0) / matches.length
+      : 0;
+    const avgForward = matches.length > 0
+      ? matches.reduce((s, m) => s + m.appleToOrangeScore, 0) / matches.length
+      : 0;
+    const avgReverse = matches.length > 0
+      ? matches.reduce((s, m) => s + m.orangeToAppleScore, 0) / matches.length
+      : 0;
 
-    // Unmatched counts (fruits without any match)
+    // Unmatched counts
     const matchedAppleIds = new Set(matches.map((m) => m.appleId));
     const matchedOrangeIds = new Set(matches.map((m) => m.orangeId));
     const unmatchedApples = apples.filter((a) => !matchedAppleIds.has(a.id)).length;
     const unmatchedOranges = oranges.filter((o) => !matchedOrangeIds.has(o.id)).length;
 
-    // Recent matches with fruit details
+    // Match rate: capped at 100%, uses the larger pool as denominator
+    const poolSize = Math.max(apples.length, oranges.length, 1);
+    const matchRate = Math.min(100, Math.round((matches.length / poolSize) * 100));
+
+    // Recent matches enriched with fruit details
     const recentMatches = matches.slice(0, 20).map((m) => {
       const apple = apples.find((a) => a.id === m.appleId);
       const orange = oranges.find((o) => o.id === m.orangeId);
@@ -80,22 +85,15 @@ Deno.serve(async (req) => {
 
     const response = {
       metrics: {
-        totalApples: stats.totalApples,
-        totalOranges: stats.totalOranges,
-        totalMatches: stats.totalMatches,
+        totalApples: apples.length,
+        totalOranges: oranges.length,
+        totalMatches: matches.length,
         avgMutualScore: Math.round(avgMutual * 100),
         avgForwardScore: Math.round(avgForward * 100),
         avgReverseScore: Math.round(avgReverse * 100),
         unmatchedApples,
         unmatchedOranges,
-        matchRate:
-          stats.totalApples + stats.totalOranges > 0
-            ? Math.round(
-                (stats.totalMatches /
-                  Math.min(stats.totalApples, stats.totalOranges || 1)) *
-                  100
-              )
-            : 0,
+        matchRate,
       },
       scoreDistribution: scoreBuckets.map((b) => ({
         label: b.label,

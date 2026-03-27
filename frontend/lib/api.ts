@@ -7,14 +7,16 @@ const SUPABASE_URL =
 const SUPABASE_ANON_KEY =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
-const headers: Record<string, string> = {
-  "Content-Type": "application/json",
-};
-
-// Only add auth header if we have a key
-if (SUPABASE_ANON_KEY) {
-  headers["Authorization"] = `Bearer ${SUPABASE_ANON_KEY}`;
-  headers["apikey"] = SUPABASE_ANON_KEY;
+/** Build request headers fresh per call (avoids stale singleton issues) */
+function getHeaders(): Record<string, string> {
+  const h: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (SUPABASE_ANON_KEY) {
+    h["Authorization"] = `Bearer ${SUPABASE_ANON_KEY}`;
+    h["apikey"] = SUPABASE_ANON_KEY;
+  }
+  return h;
 }
 
 export interface FruitData {
@@ -96,12 +98,25 @@ export interface StatsResponse {
   timestamp: string;
 }
 
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs = 30000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export async function startAppleConversation(): Promise<ConversationResponse> {
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/get-incoming-apple`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({}),
-  });
+  const res = await fetchWithTimeout(
+    `${SUPABASE_URL}/functions/v1/get-incoming-apple`,
+    { method: "POST", headers: getHeaders(), body: JSON.stringify({}) }
+  );
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Failed to start apple conversation: ${err}`);
@@ -110,11 +125,10 @@ export async function startAppleConversation(): Promise<ConversationResponse> {
 }
 
 export async function startOrangeConversation(): Promise<ConversationResponse> {
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/get-incoming-orange`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({}),
-  });
+  const res = await fetchWithTimeout(
+    `${SUPABASE_URL}/functions/v1/get-incoming-orange`,
+    { method: "POST", headers: getHeaders(), body: JSON.stringify({}) }
+  );
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Failed to start orange conversation: ${err}`);
@@ -123,11 +137,10 @@ export async function startOrangeConversation(): Promise<ConversationResponse> {
 }
 
 export async function fetchStats(): Promise<StatsResponse> {
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/get-stats`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({}),
-  });
+  const res = await fetchWithTimeout(
+    `${SUPABASE_URL}/functions/v1/get-stats`,
+    { method: "POST", headers: getHeaders(), body: JSON.stringify({}) }
+  );
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Failed to fetch stats: ${err}`);

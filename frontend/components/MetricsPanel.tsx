@@ -21,7 +21,7 @@ export function MetricsPanel() {
 
   useEffect(() => {
     refreshStats();
-  }, []);
+  }, [refreshStats]);
 
   if (statsLoading && !stats) {
     return (

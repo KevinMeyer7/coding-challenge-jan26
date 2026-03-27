@@ -5,7 +5,7 @@
  * SurrealDB runs locally on the host machine.
  */
 
-const SURREAL_URL = Deno.env.get("SURREAL_URL") || "http://host.docker.internal:8001";
+const SURREAL_URL = Deno.env.get("SURREAL_URL") || "http://localhost:8001";
 const SURREAL_NS = Deno.env.get("SURREAL_NS") || "matchmaking";
 const SURREAL_DB = Deno.env.get("SURREAL_DB") || "fruits";
 const SURREAL_USER = Deno.env.get("SURREAL_USER") || "root";
@@ -18,7 +18,24 @@ interface SurrealResponse<T = unknown> {
 }
 
 /**
- * Execute a SurrealQL query against the database
+ * Safely serialize a value for inline SurrealQL embedding.
+ * Uses JSON.stringify for the actual serialization, which produces
+ * valid SurrealQL literals for strings, numbers, booleans, arrays, and objects.
+ *
+ * NOTE: This is safe because SurrealQL string literals use the same escaping
+ * as JSON strings. JSON.stringify will escape all special characters including
+ * quotes, backslashes, and control characters, preventing breakout.
+ */
+function toSurrealValue(value: unknown): string {
+  if (value === null || value === undefined) return "NONE";
+  return JSON.stringify(value);
+}
+
+/**
+ * Execute a SurrealQL query against the database.
+ *
+ * For parameterized queries, variable placeholders ($name) are replaced
+ * with safely serialized values in a single pass to prevent double-replacement.
  */
 export async function query<T = unknown>(
   sql: string,
@@ -27,30 +44,27 @@ export async function query<T = unknown>(
   // Prepend USE statement for SurrealDB 3.x compatibility
   const usePrefix = `USE NS ${SURREAL_NS} DB ${SURREAL_DB};\n`;
 
-  // For parameterized queries, we need to use raw SQL with inline values
-  // since SurrealDB 3.x HTTP API doesn't support vars in the same way
-  let body: string;
-  let contentType: string;
-
+  let resolvedSql = sql;
   if (vars) {
-    // Replace $varName with actual values in the SQL
-    let resolvedSql = sql;
-    for (const [key, value] of Object.entries(vars)) {
-      const placeholder = `$${key}`;
-      const jsonValue = JSON.stringify(value);
-      resolvedSql = resolvedSql.replaceAll(placeholder, jsonValue);
-    }
-    body = usePrefix + resolvedSql;
-    contentType = "application/surql";
-  } else {
-    body = usePrefix + sql;
-    contentType = "application/surql";
+    // Single-pass replacement to prevent double-substitution attacks:
+    // sort keys longest-first so $attributeDescription is replaced before $attribute
+    const sortedKeys = Object.keys(vars).sort((a, b) => b.length - a.length);
+    const pattern = new RegExp(
+      sortedKeys.map((k) => `\\$${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).join("|"),
+      "g"
+    );
+    resolvedSql = sql.replace(pattern, (match) => {
+      const key = match.slice(1); // remove leading $
+      return toSurrealValue(vars[key]);
+    });
   }
+
+  const body = usePrefix + resolvedSql;
 
   const response = await fetch(`${SURREAL_URL}/sql`, {
     method: "POST",
     headers: {
-      "Content-Type": contentType,
+      "Content-Type": "application/surql",
       Accept: "application/json",
       Authorization: `Basic ${btoa(`${SURREAL_USER}:${SURREAL_PASS}`)}`,
     },
@@ -64,16 +78,16 @@ export async function query<T = unknown>(
 
   const data: SurrealResponse<T[]>[] = await response.json();
 
-  // Filter out the USE statement result and get the last real result
-  const realResults = data.filter((d) => d.time !== undefined && d.status !== undefined);
-  if (realResults.length === 0) return [];
+  // Skip the first result (USE statement) and get the last query result
+  const queryResults = data.slice(1);
+  if (queryResults.length === 0) return [];
 
-  const last = realResults[realResults.length - 1];
+  const last = queryResults[queryResults.length - 1];
   if (last.status === "ERR") {
     throw new Error(`SurrealDB query error: ${JSON.stringify(last)}`);
   }
 
-  return (last.result as T[]) || [];
+  return (last.result as T[]) ?? [];
 }
 
 /**
@@ -102,11 +116,10 @@ export async function storeFruit(fruit: {
       preferenceDescription: fruit.preferenceDescription,
     }
   );
-  // SurrealDB returns the created record, but the query method gets the last statement's result
-  // For CREATE, the result is an array with the created record
-  // Actually query returns data[last].result which should be the array
-  // Let me handle this more carefully
-  return results[0] || { id: "unknown" };
+  if (!results[0]) {
+    throw new Error(`Failed to create ${table} record: empty result from SurrealDB`);
+  }
+  return results[0];
 }
 
 /**
@@ -147,13 +160,16 @@ export async function storeMatch(match: {
     }`,
     match
   );
-  return results[0] || { id: "unknown" };
+  if (!results[0]) {
+    throw new Error("Failed to create match record: empty result from SurrealDB");
+  }
+  return results[0];
 }
 
 /**
- * Get all matches from SurrealDB
+ * Get recent matches from SurrealDB (limited for dashboard performance)
  */
-export async function getMatches(): Promise<Array<{
+export async function getMatches(limit = 50): Promise<Array<{
   id: string;
   appleId: string;
   orangeId: string;
@@ -163,7 +179,7 @@ export async function getMatches(): Promise<Array<{
   explanation: string;
   createdAt: string;
 }>> {
-  return await query(`SELECT * FROM match ORDER BY createdAt DESC`);
+  return await query(`SELECT * FROM match ORDER BY createdAt DESC LIMIT ${Math.min(limit, 500)}`);
 }
 
 /**
@@ -174,7 +190,6 @@ export async function getStats(): Promise<{
   totalOranges: number;
   totalMatches: number;
   avgMutualScore: number;
-  matchScoreDistribution: Array<{ range: string; count: number }>;
 }> {
   const [appleCount] = await query<{ count: number }>(
     `SELECT count() AS count FROM apple GROUP ALL`
@@ -190,10 +205,9 @@ export async function getStats(): Promise<{
   );
 
   return {
-    totalApples: appleCount?.count || 0,
-    totalOranges: orangeCount?.count || 0,
-    totalMatches: matchCount?.count || 0,
-    avgMutualScore: avgScore?.avg || 0,
-    matchScoreDistribution: [],
+    totalApples: appleCount?.count ?? 0,
+    totalOranges: orangeCount?.count ?? 0,
+    totalMatches: matchCount?.count ?? 0,
+    avgMutualScore: avgScore?.avg ?? 0,
   };
 }
