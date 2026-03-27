@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Clera Coding Challenge — Interview Preparation</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, sans-serif; line-height: 1.7; color: #1a1a2e; max-width: 800px; margin: 0 auto; padding: 40px 30px; background: #fff; }
+  @media print { body { padding: 20px; font-size: 11pt; } .page-break { page-break-before: always; } h2 { page-break-after: avoid; } }
+  h1 { font-size: 28px; font-weight: 700; color: #0f172a; border-bottom: 3px solid #3b82f6; padding-bottom: 12px; margin-bottom: 8px; }
+  h1 + p { color: #64748b; font-size: 14px; margin-bottom: 32px; }
+  h2 { font-size: 20px; font-weight: 700; color: #1e293b; margin-top: 36px; margin-bottom: 16px; padding-bottom: 6px; border-bottom: 1px solid #e2e8f0; }
+  h3 { font-size: 16px; font-weight: 600; color: #334155; margin-top: 20px; margin-bottom: 10px; }
+  p { margin-bottom: 12px; color: #374151; }
+  ul, ol { margin-bottom: 12px; padding-left: 24px; }
+  li { margin-bottom: 6px; color: #374151; }
+  code { font-family: 'JetBrains Mono', monospace; font-size: 0.85em; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; color: #1e40af; }
+  pre { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 8px; margin-bottom: 16px; overflow-x: auto; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: inherit; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 13px; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e2e8f0; }
+  th { background: #f8fafc; font-weight: 600; color: #475569; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .callout { background: #eff6ff; border-left: 4px solid #3b82f6; padding: 14px 16px; margin-bottom: 16px; border-radius: 0 8px 8px 0; font-size: 14px; }
+  .architecture { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 16px; font-family: 'JetBrains Mono', monospace; font-size: 11px; white-space: pre; line-height: 1.4; }
+  .section-number { display: inline-block; width: 28px; height: 28px; background: #3b82f6; color: white; border-radius: 50%; text-align: center; line-height: 28px; font-size: 14px; font-weight: 700; margin-right: 8px; vertical-align: middle; }
+  strong { color: #1e293b; }
+</style>
+</head>
+<body>
+
+<h1>Clera Coding Challenge</h1>
+<p>Interview Preparation — Fruit Matchmaking System | Kevin Meyer | March 2026</p>
+
+<h2><span class="section-number">1</span> Architecture Overview</h2>
+
+<div class="architecture">┌─────────────────┐     ┌──────────────────────┐     ┌─────────────┐
+│   Next.js 16    │────▶│  Supabase Edge Fns   │────▶│  SurrealDB  │
+│   (Frontend)    │◀────│  (Deno Runtime)       │◀────│  (Data)     │
+│                 │     │                        │     │             │
+│ • Dashboard     │     │ • get-incoming-apple   │     │ • apple     │
+│ • Chat UI       │     │ • get-incoming-orange  │     │ • orange    │
+│ • Analytics     │     │ • get-stats            │     │ • match     │
+│ • Zustand Store │     │ • Matching Algorithm   │     │             │
+└─────────────────┘     │ • LLM Integration      │     └─────────────┘
+                        └──────────────────────┘
+                                  │ (optional)
+                        ┌──────────────────┐
+                        │   OpenAI API     │
+                        └──────────────────┘</div>
+
+<h3>Key Design Decisions</h3>
+<ol>
+  <li><strong>SurrealDB as the primary data store</strong>. SCHEMALESS tables — flexible for nullable/optional fruit attributes. HTTP API used directly from Deno (zero SDK dependencies).</li>
+  <li><strong>Three separate tables</strong>: <code>apple</code>, <code>orange</code>, <code>match</code>. Type-safe queries, independent indexes, clear relationship modeling.</li>
+  <li><strong>Edge Functions as stateless backend</strong>. Each function follows the prescribed 5-step flow. All state in SurrealDB.</li>
+  <li><strong>Client-side rendered dashboard</strong>. Interactive chat UI + real-time updates are better as client components.</li>
+</ol>
+
+<h2 class="page-break"><span class="section-number">2</span> Matching Algorithm</h2>
+
+<h3>Bidirectional Compatibility Scoring</h3>
+<ul>
+  <li><strong>Forward score</strong>: How well does the candidate satisfy the incoming fruit's preferences?</li>
+  <li><strong>Reverse score</strong>: How well does the incoming fruit satisfy the candidate's preferences?</li>
+  <li><strong>Mutual score</strong>: <code>√(forward × reverse)</code> — geometric mean of both</li>
+</ul>
+
+<div class="callout">
+  <strong>Why geometric mean?</strong> It penalizes imbalance. A 100% + 0% pair scores 0% (geometric) vs 50% (arithmetic). Both sides must be satisfied — this mirrors real matchmaking.
+</div>
+
+<h3>Scoring Rules</h3>
+<table>
+  <tr><th>Type</th><th>Method</th></tr>
+  <tr><td>Boolean</td><td>Exact match = 1.0, mismatch = 0.0</td></tr>
+  <tr><td>Numeric range</td><td>In range = 1.0, out of range = exponential decay</td></tr>
+  <tr><td>Shine factor</td><td>Exact = 1.0, partial credit by scale proximity</td></tr>
+  <tr><td>Null attribute</td><td>0.5 (neutral)</td></tr>
+  <tr><td>Omitted preference</td><td>Not counted (any value OK)</td></tr>
+</table>
+
+<h3>Exponential Decay for Numeric Ranges</h3>
+<p>Size 8.1 when max preference is 8.0 shouldn't score 0. <code>e^(-distance/scale)</code> provides graceful degradation near boundaries, rapid falloff for large deviations.</p>
+
+<h2><span class="section-number">3</span> LLM Integration</h2>
+<p>Optional and gracefully degradable:</p>
+<ol>
+  <li><code>OPENAI_API_KEY</code> set → calls OpenAI chat completions</li>
+  <li>API fails → template-based narrative fallback</li>
+  <li>No key → template generator directly</li>
+</ol>
+<p>Prompt creates a "Perfect Pear" matchmaking show host. Provides fruit descriptions + top 3 scores. Output capped at 200 words.</p>
+
+<h2 class="page-break"><span class="section-number">4</span> Frontend Design</h2>
+
+<pre><code>DashboardPage
+├── MetricsPanel          — 6 KPI cards (Lucide icons)
+├── ChatVisualization     — Interactive matchmaking conversation
+├── CompatibilityBreakdown — Per-criterion score bars
+├── ScoreDistribution     — Recharts bar chart
+├── RecentMatches         — Scrollable match list
+└── SystemPerformance     — Performance metrics table</code></pre>
+
+<h3>Why Chat UI?</h3>
+<ol>
+  <li><strong>Natural mapping</strong>: System generates language — chat is most intuitive</li>
+  <li><strong>Sequential flow</strong>: arrive → introduce → search → match maps to timeline</li>
+  <li><strong>Engaging</strong>: 600ms message animations create narrative feel</li>
+  <li><strong>Familiar</strong>: Universally understood interface pattern</li>
+</ol>
+
+<h2><span class="section-number">5</span> Data Flow</h2>
+<p><strong>When user clicks "New Apple":</strong></p>
+<ol>
+  <li>Frontend POSTs to edge function</li>
+  <li>Generate random apple (Box-Muller distribution)</li>
+  <li>Generate natural language descriptions</li>
+  <li>Store apple in SurrealDB</li>
+  <li>Fetch all oranges, score each (forward + reverse + mutual)</li>
+  <li>Select top 3, generate LLM narrative</li>
+  <li>Store best match, return response</li>
+  <li>Chat messages animated in, stats refreshed</li>
+</ol>
+
+<h2><span class="section-number">6</span> Metrics — How Do I Know It Works?</h2>
+<table>
+  <tr><th>Metric</th><th>What It Tells Us</th><th>Target</th></tr>
+  <tr><td>Avg Mutual Score</td><td>Overall match quality</td><td>&gt;60%</td></tr>
+  <tr><td>Match Rate</td><td>% fruits matched</td><td>100%</td></tr>
+  <tr><td>Score Distribution</td><td>Healthy spread</td><td>Bell curve, 60-80% peak</td></tr>
+  <tr><td>Forward vs Reverse</td><td>Balanced matching</td><td>Similar values</td></tr>
+  <tr><td>Unmatched Count</td><td>Pool health</td><td>Decreasing</td></tr>
+</table>
+
+<h2 class="page-break"><span class="section-number">7</span> Trade-offs</h2>
+<h3>With More Time</h3>
+<ol>
+  <li><strong>Trigger.dev</strong>: Background batch matching jobs</li>
+  <li><strong>Effect library</strong>: Deeper edge function error pipeline</li>
+  <li><strong>Network graph</strong>: D3.js force-directed visualization</li>
+  <li><strong>Realtime</strong>: Supabase Realtime for cross-tab updates</li>
+  <li><strong>A/B testing</strong>: Compare scoring algorithms</li>
+</ol>
+
+<h3>Conscious Decisions</h3>
+<table>
+  <tr><th>Decision</th><th>Rationale</th></tr>
+  <tr><td>SCHEMALESS tables</td><td>Faster dev. Production wants schema validation.</td></tr>
+  <tr><td>Template fallback narratives</td><td>System always works without external API.</td></tr>
+  <tr><td>In-memory SurrealDB</td><td>Perfect for local dev. Prod needs persistent storage.</td></tr>
+  <tr><td>No auth</td><td>Local demo. Prod needs JWT verification.</td></tr>
+</table>
+
+<h2><span class="section-number">8</span> Questions I'd Ask</h2>
+<ol>
+  <li>"How would matching quality be measured in production — human feedback loop?"</li>
+  <li>"Synchronous matching or Trigger.dev batch processed?"</li>
+  <li>"How should LLM integration scale — dedicated model or per-match API calls?"</li>
+  <li>"Expected data volume — hundreds or millions?"</li>
+  <li>"Explore SurrealDB graph features (RELATE) for match relationships?"</li>
+</ol>
+
+<hr style="margin-top: 40px; border: none; border-top: 1px solid #e2e8f0;">
+<p style="text-align: center; color: #94a3b8; font-size: 12px; margin-top: 16px;">Kevin Meyer — Clera Coding Challenge — March 2026<br>Print this page (Cmd+P → Save as PDF) for the PDF version.</p>
+
+</body>
+</html>

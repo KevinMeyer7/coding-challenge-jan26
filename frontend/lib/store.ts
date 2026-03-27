@@ -1,178 +1,216 @@
 import { create } from "zustand";
-import { devtools, persist } from "zustand/middleware";
+import { devtools } from "zustand/middleware";
+import type { ConversationResponse, StatsResponse } from "./api";
+import {
+  startAppleConversation,
+  startOrangeConversation,
+  fetchStats,
+} from "./api";
 
-// =============================================================================
-// ⚠️  DISCLAIMER
-// =============================================================================
-// This store structure is just a STARTING POINT. Feel free to:
-// - Completely redesign the state shape
-// - Remove types/fields that don't fit your solution
-// - Add your own types and actions
-// - Use a different state management approach entirely
-//
-// The types below are examples based on what we imagined - your implementation
-// may look completely different, and that's great!
-// =============================================================================
-
-// =============================================================================
-// TYPES (Examples - modify or replace these!)
-// =============================================================================
-
-export interface Apple {
-  id: string;
-  name: string;
-  attributes: Record<string, unknown>;
-  preferences: Record<string, unknown>;
-  createdAt: Date;
-}
-
-export interface Orange {
-  id: string;
-  name: string;
-  attributes: Record<string, unknown>;
-  preferences: Record<string, unknown>;
-  createdAt: Date;
-}
-
-export interface Match {
-  id: string;
-  appleId: string;
-  orangeId: string;
-  score: number;
-  status: "pending" | "confirmed" | "rejected";
-  createdAt: Date;
-}
-
-export interface Conversation {
+/**
+ * A single conversation represents one "fruit arrival" -
+ * the full lifecycle of generating a fruit, finding matches, and getting a narrative.
+ */
+export interface ConversationEntry {
   id: string;
   type: "apple" | "orange";
-  fruitId: string;
-  messages: ConversationMessage[];
-  status: "active" | "completed" | "error";
-  createdAt: Date;
+  response: ConversationResponse;
+  timestamp: string;
+  status: "loading" | "complete" | "error";
+  error?: string;
 }
 
-export interface ConversationMessage {
+/**
+ * Chat message for the visualization
+ */
+export interface ChatMessage {
   id: string;
-  role: "system" | "user" | "assistant";
+  conversationId: string;
+  role: "system" | "fruit" | "matchmaker";
   content: string;
-  timestamp: Date;
+  timestamp: string;
+  fruitType?: "apple" | "orange";
 }
-
-// =============================================================================
-// STORE STATE
-// =============================================================================
 
 interface MatchmakingState {
-  // Data
-  apples: Apple[];
-  oranges: Orange[];
-  matches: Match[];
-  conversations: Conversation[];
-
-  // UI State
+  // Conversations
+  conversations: ConversationEntry[];
   activeConversationId: string | null;
+
+  // Stats
+  stats: StatsResponse | null;
+  statsLoading: boolean;
+
+  // UI state
   isLoading: boolean;
   error: string | null;
 
   // Actions
-  setApples: (apples: Apple[]) => void;
-  setOranges: (oranges: Orange[]) => void;
-  addMatch: (match: Match) => void;
+  startConversation: (type: "apple" | "orange") => Promise<void>;
   setActiveConversation: (id: string | null) => void;
-  addConversation: (conversation: Conversation) => void;
-  addMessageToConversation: (
-    conversationId: string,
-    message: ConversationMessage
-  ) => void;
-  setLoading: (isLoading: boolean) => void;
-  setError: (error: string | null) => void;
-  reset: () => void;
+  refreshStats: () => Promise<void>;
+  clearError: () => void;
 }
 
-// =============================================================================
-// INITIAL STATE
-// =============================================================================
-
-const initialState = {
-  apples: [],
-  oranges: [],
-  matches: [],
-  conversations: [],
-  activeConversationId: null,
-  isLoading: false,
-  error: null,
-};
-
-// =============================================================================
-// STORE
-// =============================================================================
+let conversationCounter = 0;
 
 export const useMatchmakingStore = create<MatchmakingState>()(
   devtools(
-    persist(
-      (set) => ({
-        ...initialState,
+    (set, get) => ({
+      conversations: [],
+      activeConversationId: null,
+      stats: null,
+      statsLoading: false,
+      isLoading: false,
+      error: null,
 
-        setApples: (apples) => set({ apples }),
+      startConversation: async (type) => {
+        const id = `conv-${Date.now()}-${++conversationCounter}`;
+        const placeholder: ConversationEntry = {
+          id,
+          type,
+          response: null as unknown as ConversationResponse,
+          timestamp: new Date().toISOString(),
+          status: "loading",
+        };
 
-        setOranges: (oranges) => set({ oranges }),
+        set((state) => ({
+          conversations: [placeholder, ...state.conversations],
+          activeConversationId: id,
+          isLoading: true,
+          error: null,
+        }));
 
-        addMatch: (match) =>
+        try {
+          const response =
+            type === "apple"
+              ? await startAppleConversation()
+              : await startOrangeConversation();
+
           set((state) => ({
-            matches: [...state.matches, match],
-          })),
-
-        setActiveConversation: (id) => set({ activeConversationId: id }),
-
-        addConversation: (conversation) =>
-          set((state) => ({
-            conversations: [...state.conversations, conversation],
-          })),
-
-        addMessageToConversation: (conversationId, message) =>
-          set((state) => ({
-            conversations: state.conversations.map((conv) =>
-              conv.id === conversationId
-                ? { ...conv, messages: [...conv.messages, message] }
-                : conv
+            conversations: state.conversations.map((c) =>
+              c.id === id ? { ...c, response, status: "complete" as const } : c
             ),
-          })),
+            isLoading: false,
+          }));
 
-        setLoading: (isLoading) => set({ isLoading }),
+          // Auto-refresh stats after a new conversation
+          get().refreshStats();
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Unknown error";
+          set((state) => ({
+            conversations: state.conversations.map((c) =>
+              c.id === id
+                ? { ...c, status: "error" as const, error: message }
+                : c
+            ),
+            isLoading: false,
+            error: message,
+          }));
+        }
+      },
 
-        setError: (error) => set({ error }),
+      setActiveConversation: (id) => set({ activeConversationId: id }),
 
-        reset: () => set(initialState),
-      }),
-      {
-        name: "matchmaking-storage",
-        // Only persist specific fields
-        partialize: (state) => ({
-          conversations: state.conversations,
-          matches: state.matches,
-        }),
-      }
-    ),
+      refreshStats: async () => {
+        set({ statsLoading: true });
+        try {
+          const stats = await fetchStats();
+          set({ stats, statsLoading: false });
+        } catch (err) {
+          console.error("Failed to refresh stats:", err);
+          set({ statsLoading: false });
+        }
+      },
+
+      clearError: () => set({ error: null }),
+    }),
     { name: "MatchmakingStore" }
   )
 );
 
-// =============================================================================
-// SELECTORS
-// =============================================================================
+/**
+ * Convert a conversation into a sequence of chat messages for visualization
+ */
+export function conversationToChatMessages(
+  entry: ConversationEntry
+): ChatMessage[] {
+  if (!entry.response || entry.status !== "complete") return [];
 
-// Example selectors for computed values
+  const messages: ChatMessage[] = [];
+  const { response } = entry;
+  const fruitEmoji = response.fruit.type === "apple" ? "🍎" : "🍊";
+
+  // System introduction
+  messages.push({
+    id: `${entry.id}-sys-1`,
+    conversationId: entry.id,
+    role: "system",
+    content: `A new ${response.fruit.type} has arrived at the matchmaking booth!`,
+    timestamp: entry.timestamp,
+  });
+
+  // Fruit introduces itself
+  messages.push({
+    id: `${entry.id}-fruit-attrs`,
+    conversationId: entry.id,
+    role: "fruit",
+    content: response.communication.attributes,
+    timestamp: entry.timestamp,
+    fruitType: response.fruit.type,
+  });
+
+  // Fruit shares preferences
+  messages.push({
+    id: `${entry.id}-fruit-prefs`,
+    conversationId: entry.id,
+    role: "fruit",
+    content: response.communication.preferences,
+    timestamp: entry.timestamp,
+    fruitType: response.fruit.type,
+  });
+
+  // System searching
+  const searchCount =
+    response.meta.totalOrangesSearched ?? response.meta.totalApplesSearched ?? 0;
+  const targetType = response.fruit.type === "apple" ? "oranges" : "apples";
+  messages.push({
+    id: `${entry.id}-sys-search`,
+    conversationId: entry.id,
+    role: "system",
+    content: `Searching through ${searchCount} ${targetType} in the database...`,
+    timestamp: entry.timestamp,
+  });
+
+  // Matchmaker announces results
+  if (response.matches.length > 0) {
+    const best = response.matches[0];
+    const scorePercent = (best.mutualScore * 100).toFixed(0);
+    messages.push({
+      id: `${entry.id}-match-score`,
+      conversationId: entry.id,
+      role: "matchmaker",
+      content: `Found ${response.matches.length} potential match${response.matches.length > 1 ? "es" : ""}! Top match: **${scorePercent}% compatibility** (forward: ${(best.forwardScore * 100).toFixed(0)}%, reverse: ${(best.reverseScore * 100).toFixed(0)}%)`,
+      timestamp: entry.timestamp,
+    });
+  }
+
+  // LLM narrative
+  messages.push({
+    id: `${entry.id}-narrative`,
+    conversationId: entry.id,
+    role: "matchmaker",
+    content: response.narrative,
+    timestamp: entry.timestamp,
+  });
+
+  return messages;
+}
+
+// Selectors
 export const selectActiveConversation = (state: MatchmakingState) =>
   state.conversations.find((c) => c.id === state.activeConversationId);
 
-export const selectMatchCount = (state: MatchmakingState) =>
-  state.matches.length;
-
-export const selectSuccessRate = (state: MatchmakingState) => {
-  const confirmed = state.matches.filter((m) => m.status === "confirmed").length;
-  return state.matches.length > 0
-    ? Math.round((confirmed / state.matches.length) * 100)
-    : 0;
-};
-
+export const selectCompletedConversations = (state: MatchmakingState) =>
+  state.conversations.filter((c) => c.status === "complete");

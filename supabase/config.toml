@@ -392,6 +392,12 @@ entrypoint = "./functions/get-incoming-apple/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/get-incoming-apple/*.html" ]
 
+[functions.get-stats]
+enabled = true
+verify_jwt = true
+import_map = "./functions/get-stats/deno.json"
+entrypoint = "./functions/get-stats/index.ts"
+
 [functions.get-incoming-orange]
 enabled = true
 verify_jwt = true
