@@ -42,6 +42,11 @@ deno run --allow-net --allow-read --allow-env scripts/serve.ts
 **Option B — Supabase CLI (requires Docker Desktop running):**
 
 ```bash
+# First time only: start the Supabase local stack
+npx supabase start
+
+# Then serve edge functions (edge functions run inside Docker,
+# so supabase/.env.local uses host.docker.internal to reach SurrealDB)
 npx supabase functions serve --no-verify-jwt --env-file supabase/.env.local
 ```
 
