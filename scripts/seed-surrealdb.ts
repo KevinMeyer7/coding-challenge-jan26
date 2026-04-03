@@ -11,10 +11,10 @@
  */
 
 const SURREAL_URL = Deno.env.get("SURREAL_URL") || "http://localhost:8001";
-const SURREAL_NS = "matchmaking";
-const SURREAL_DB = "fruits";
-const SURREAL_USER = "root";
-const SURREAL_PASS = "root";
+const SURREAL_NS = Deno.env.get("SURREAL_NS") || "matchmaking";
+const SURREAL_DB = Deno.env.get("SURREAL_DB") || "fruits";
+const SURREAL_USER = Deno.env.get("SURREAL_USER") || "root";
+const SURREAL_PASS = Deno.env.get("SURREAL_PASS") || "root";
 
 async function surrealQuery(sql: string): Promise<unknown[]> {
   // Prepend USE statement to set namespace and database context
@@ -77,17 +77,26 @@ async function main() {
   let appleCount = 0;
   let orangeCount = 0;
 
+  // Import communication functions to generate descriptions for seed data
+  const { communicateAttributes, communicatePreferences } = await import(
+    "../supabase/functions/_shared/generateFruit.ts"
+  );
+
   for (const fruit of fruits) {
     const table = fruit.type;
     const attrs = JSON.stringify(fruit.attributes);
     const prefs = JSON.stringify(fruit.preferences);
 
+    // Generate human-readable descriptions so LLM narratives have context
+    const attrDesc = communicateAttributes(fruit as any);
+    const prefDesc = communicatePreferences(fruit as any);
+
     await surrealQuery(
       `CREATE ${table} CONTENT {
         attributes: ${attrs},
         preferences: ${prefs},
-        attributeDescription: NONE,
-        preferenceDescription: NONE,
+        attributeDescription: ${JSON.stringify(attrDesc)},
+        preferenceDescription: ${JSON.stringify(prefDesc)},
         createdAt: time::now()
       }`
     );

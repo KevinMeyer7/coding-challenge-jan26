@@ -16,14 +16,21 @@ export default function DashboardPage() {
   const refreshStats = useMatchmakingStore((s) => s.refreshStats);
   const statsLoading = useMatchmakingStore((s) => s.statsLoading);
   const [showHowItWorks, setShowHowItWorks] = useState(false);
-  const [theme, setTheme] = useState<"system" | "light" | "dark">("system");
+  const [theme, setTheme] = useState<"system" | "light" | "dark">(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("theme") as "light" | "dark") || "system";
+    }
+    return "system";
+  });
 
   useEffect(() => {
     const root = document.documentElement;
     if (theme === "system") {
       root.removeAttribute("data-theme");
+      localStorage.removeItem("theme");
     } else {
       root.setAttribute("data-theme", theme);
+      localStorage.setItem("theme", theme);
     }
   }, [theme]);
 

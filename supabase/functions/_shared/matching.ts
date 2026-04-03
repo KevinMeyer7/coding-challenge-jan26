@@ -68,7 +68,6 @@ function scorePreferenceSatisfaction(
   preferences: FruitPreferences
 ): { score: number; breakdown: RawCriterionScore[] } {
   const breakdown: RawCriterionScore[] = [];
-  const scores: number[] = [];
 
   // Size preference
   if (preferences.size !== undefined) {

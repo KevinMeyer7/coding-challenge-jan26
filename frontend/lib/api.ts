@@ -144,13 +144,48 @@ async function callEdgeFunction<T>(path: string, body: unknown = {}): Promise<T>
 }
 
 export async function startAppleConversation(): Promise<ConversationResponse> {
-  return callEdgeFunction<ConversationResponse>("get-incoming-apple");
+  const result = await callEdgeFunction<ConversationResponse>("get-incoming-apple");
+  return enhanceNarrativeWithAISdk(result);
 }
 
 export async function startOrangeConversation(): Promise<ConversationResponse> {
-  return callEdgeFunction<ConversationResponse>("get-incoming-orange");
+  const result = await callEdgeFunction<ConversationResponse>("get-incoming-orange");
+  return enhanceNarrativeWithAISdk(result);
 }
 
 export async function fetchStats(): Promise<StatsResponse> {
   return callEdgeFunction<StatsResponse>("get-stats");
+}
+
+/**
+ * Calls the AI SDK route (/api/chat) to generate an enhanced narrative.
+ * Falls back to the edge function's narrative if the AI SDK route fails.
+ */
+async function enhanceNarrativeWithAISdk(
+  result: ConversationResponse
+): Promise<ConversationResponse> {
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fruitType: result.fruit.type,
+        attrDescription: result.communication.attributes,
+        prefDescription: result.communication.preferences,
+        topMatches: result.matches,
+        candidates: result.matches.map((m) => ({
+          id: m.orangeId || m.appleId,
+          attributes: m.orangeAttributes || m.appleAttributes,
+          attributeDescription: m.orangeAttributeDescription || m.appleAttributeDescription,
+        })),
+      }),
+    });
+    if (res.ok) {
+      const { narrative } = await res.json();
+      if (narrative) return { ...result, narrative };
+    }
+  } catch {
+    // AI SDK enhancement failed — use the edge function's narrative
+  }
+  return result;
 }

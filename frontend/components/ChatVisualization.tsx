@@ -20,12 +20,15 @@ export function ChatVisualization() {
   const [visibleCount, setVisibleCount] = useState(0);
   const animatedRef = useRef<Set<string>>(new Set());
 
+  // Memoize on id + status only — response reference changes on every store update
+  // but the content only changes when status transitions to "complete"
   const allMessages = useMemo(
     () =>
       activeConversation
         ? conversationToChatMessages(activeConversation)
         : [],
-    [activeConversation?.id, activeConversation?.status, activeConversation?.response]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeConversation?.id, activeConversation?.status]
   );
 
   useEffect(() => {
