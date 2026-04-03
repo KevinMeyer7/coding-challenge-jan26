@@ -1,158 +1,167 @@
-# Coding Challenge - Matchmaking System
+# Fruit Matchmaking System
 
-## Introduction
+A fullstack application that connects apples to oranges based on their preferences, using bidirectional weighted compatibility scoring and LLM-powered match narratives.
 
-Hey! Welcome to our little take home challenge. We won't force Leetcode problems down your throat. Instead, what we do here at Clera is build, so therefore, we expect you to build cool stuff too!
+**Live Demo:** [https://frontend-kevins-projects-d1556d1c.vercel.app](https://frontend-kevins-projects-d1556d1c.vercel.app)
 
-But what and why are we building? Well, a lot of the world revolves around matchmaking. The fact that you and I exist is proof of that. A not so insignificant portion of what shapes a person's life is determined by matchmaking: friends, love, jobs. I mean hell, what we're doing right now at this very moment is matchmaking. Despite its prevalence, it is still quite the difficult task. So let's tackle it together—on a small scale at least. Our goal is to connect apples to oranges. Just because we shouldn't compare apples to oranges, doesn't mean we can't try to create a perfect pear… pair.
+## Architecture
 
-## Problem Statement
-
-The abstract idea of the project is simple. In one basket we have apples, each apple has preferences that it wishes its orange to fulfill. In another basket we have oranges, each orange obviously also has preferences that it wishes a potential apple to meet. Our job is to:
-
-1. Match them based on their joint preferences
-2. Communicate to both parties that we've found them a match
-
-We're going to be creating a small fullstack application that will encompass everything from frontend, edge functions as our backend and a bit of creative problem solving on your end to make this come to life.
-
-## Tech Stack
-
-Let me lay out the tech stack real quick before I get into more specifics.
-
-### Frontend
-- React
-- Next.js
-- Tailwind CSS
-- Zustand
-- Effect
-
-### Backend
-- Trigger.dev
-- Supabase Edge Functions
-- SurrealDB
-
-### Agentic Components
-- AI SDK
-
-## Implementation Details
-
-### Data Setup
-
-In the `data` folder you will find a JSON file called `raw_apples_and_oranges.json`. It contains an array of apples and oranges with relevant attributes and their preferences. The first task is to create a SurrealDB instance that will hold this data. All design decisions regarding data storage are up to you, whatever helps achieve the goal best. This gives us our main pool of apples and oranges to draw from during the system's core cycle.
-
-### Core System
-
-Now that we have our data and access to it, we need to implement the core of our system. Two edge functions are provided: `get-incoming-apple` and `get-incoming-orange`. Both follow the same task flow:
-
-#### Task Flow
-
-1. **Generate a new fruit instance** ✅ *Implemented*
-   - Uses `generateApple()` or `generateOrange()` from `_shared/generateFruit.ts`
-   - Attributes are randomly generated using a normal distribution
-   - Preferences are generated with relaxed constraints (not too strict)
-
-2. **Capture the fruit's communication** ✅ *Implemented*
-   - `communicateAttributes(fruit)` - Returns a human-readable description of the fruit's physical characteristics
-   - `communicatePreferences(fruit)` - Returns a human-readable description of what the fruit is looking for in a match
-   - Both functions have extensive variability with multiple templates and phrasings
-
-3. **Store the new fruit in SurrealDB** 🔲 *TODO*
-   - Connect to SurrealDB instance
-   - Insert the fruit record with attributes and preferences
-
-4. **Match the fruit to potential partners** 🔲 *TODO*
-   - Query existing fruits of the opposite type from SurrealDB
-   - Calculate compatibility scores based on preference matching
-   - Return ranked matches
-
-5. **Communicate matching results via LLM** 🔲 *TODO*
-   - Generate natural language response about the matches
-   - Include match explanations and compatibility scores if time allows
-
-#### Running the Backend Locally
-
-```bash
-# Start Supabase local environment (from project root)
-npx supabase start
-
-# Serve edge functions (in a separate terminal)
-npx supabase functions serve --no-verify-jwt
-
-# Test the functions
-curl http://127.0.0.1:54321/functions/v1/get-incoming-apple -H "Content-Type: application/json" -d '{}'
-curl http://127.0.0.1:54321/functions/v1/get-incoming-orange -H "Content-Type: application/json" -d '{}'
+```
+Next.js 16 (Vercel)  →  Supabase Edge Functions (Cloud)  →  SurrealDB (Cloud)
+     │                            │
+     ├── Zustand (state)          ├── Matching Algorithm
+     ├── Effect (error handling)  ├── LLM Narrative (AI SDK / GPT-4o-mini)
+     ├── Recharts (analytics)     └── SurrealDB HTTP Client
+     └── Framer Motion (UI)
 ```
 
-#### Running the Frontend Locally
+### Tech Stack
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| Frontend | Next.js 16, React 19, Tailwind CSS 4 | Dashboard + visualization |
+| State | Zustand | Client state management |
+| Error handling | Effect | Typed error pipeline with retry + timeout |
+| Backend | Supabase Edge Functions (Deno) | 3 serverless functions |
+| Database | SurrealDB 3.x (Cloud) | Fruit pool + match storage |
+| LLM | AI SDK + GPT-4o-mini | Match narrative generation |
+| Analytics | Recharts | Score distribution + bidirectional scatter |
+| Animation | Framer Motion | Chat message reveals + transitions |
+
+## Matching Algorithm
+
+Bidirectional weighted compatibility scoring — the core of the system.
+
+### How It Works
+
+1. **Forward score**: How well does the candidate satisfy the incoming fruit's preferences?
+2. **Reverse score**: How well does the incoming fruit satisfy the candidate's preferences?
+3. **Mutual score**: `√(Forward × Reverse)` — geometric mean penalizes one-sided matches
+
+### Why Geometric Mean?
+
+Arithmetic mean: 100% + 0% = 50% (looks OK but one side is miserable)
+Geometric mean: 100% + 0% = **0%** (correctly identifies a one-sided mismatch)
+
+Same principle as F1 score in information retrieval.
+
+### Criterion Weights
+
+Not all preferences are equal. Dealbreakers count more than cosmetics:
+
+| Criterion | Weight | Rationale |
+|-----------|--------|-----------|
+| Has Worm | 3.0x | Dealbreaker — nobody wants a worm |
+| Has Chemicals | 2.5x | Strong health preference |
+| Size | 1.0x | Standard physical preference |
+| Weight | 1.0x | Standard physical preference |
+| Has Stem | 0.8x | Mild preference |
+| Has Leaf | 0.7x | Cosmetic preference |
+| Shine Factor | 0.7x | Cosmetic preference |
+
+### Scoring Methods by Type
+
+- **Boolean** (stem, leaf, worm, chemicals): Exact match = 1.0, mismatch = 0.0
+- **Numeric range** (size, weight): In range = 1.0, out of range = exponential decay `e^(-d/scale)`
+- **Ordinal** (shine factor): Partial credit by proximity on the dull→neutral→shiny→extraShiny scale
+- **Null/unknown**: 0.5 (information-theoretic neutral point)
+- **Omitted preference**: Not scored (any value acceptable)
+
+## Edge Functions
+
+| Function | Purpose |
+|----------|---------|
+| `get-incoming-apple` | Generate apple → store in SurrealDB → match against oranges → LLM narrative |
+| `get-incoming-orange` | Generate orange → store in SurrealDB → match against apples → LLM narrative |
+| `get-stats` | Aggregated metrics, score distribution, fruit pool, recent matches |
+
+## Frontend Dashboard
+
+- **Chat visualization** — 3-phase animated conversation: fruit arrival with profile card, candidate scoring strip, result panel with LLM narrative
+- **Compatibility breakdown** — side-by-side preference-vs-actual comparison with want/has labels
+- **Metrics panel** — 6 insight-driven KPIs: pool sizes, best match, pool health, bidirectional balance
+- **Score distribution** — bar chart of match quality buckets
+- **Bidirectional scatter** — forward vs reverse scores showing geometric mean balance
+- **Fruit pool explorer** — browse all fruits in the database with match status
+- **How It Works** — expandable explainer showing attributes, weights, and tech stack
+- **Light/dark mode** — manual toggle with system preference fallback
+- **Auto-bootstrap** — first load automatically runs 5 conversations to populate analytics
+
+## Quick Start (Local Development)
+
+### Prerequisites
+
+- [Node.js 18+](https://nodejs.org) and [pnpm](https://pnpm.io)
+- [Deno 2+](https://deno.land) (`brew install deno`)
+- [SurrealDB 3+](https://surrealdb.com) (`brew install surrealdb/tap/surreal`)
+
+### Setup
 
 ```bash
-# Navigate to frontend directory
-cd frontend
-
 # Install dependencies
 pnpm install
+cd frontend && pnpm install && cd ..
 
-# Start the development server
-pnpm dev
+# Start SurrealDB
+surreal start --user root --pass root --bind 0.0.0.0:8001 memory
+
+# Seed the database (40 fruits from raw_apples_and_oranges.json)
+deno run --allow-net --allow-read --allow-env scripts/seed-surrealdb.ts
+
+# Start backend (Option A: standalone Deno server, no Docker needed)
+deno run --allow-net --allow-read --allow-env scripts/serve.ts
+
+# Start backend (Option B: Supabase CLI, requires Docker)
+npx supabase start
+npx supabase functions serve --no-verify-jwt --env-file supabase/.env.local
+
+# Start frontend
+cd frontend && pnpm dev
 ```
 
-The frontend will be available at `http://localhost:3000`. The dashboard is at `/dashboard`.
+### Environment Variables
 
-### Visualization
-
-To tie it all together, you will create a visualization (you may choose the medium) of this flow. In other words, it should be possible for us to "start a new conversation" and visualize the resulting "conversation".
-
-### Metrics & Analytics
-
-Our goal is to match as best we can, but how do I know if our solution is any good? You tell me! In the frontend application, include an admin dashboard with metrics that you can track and help convince me that the system is performing well and we are creating great pears.
-
-## Hard Requirements
-
-- The data must be loaded into and queried from SurrealDB
-- The communication between the system and the fruits need to be visualized in a medium of your choosing
-- You must communicate the matchmaking results through an LLM
-
-## Additional Notes
-
-- You may serve the edge functions locally.
-
-- We encourage you to utilize AI as you see fit throughout this challenge; seeing as you will need to build many aspects of the solution quickly. Regardless of how the code is created, you will be expected to own it. This ownership includes:
-  - Explaining all generated code
-  - Justifying all design decisions
-  - Displaying creativity in your solution
-
-- Also feel free to change anything and everything in the template. Just because someone wrote it, doesn't mean it is right or perfect. So let's hold each other accountable and call out anything we see to keep the collective quality up and solve the problem together.
+Copy `.env.example` and set:
+- `SURREAL_URL` — SurrealDB endpoint
+- `OPENAI_API_KEY` — for LLM narratives (optional, falls back to templates)
+- `NEXT_PUBLIC_SUPABASE_URL` — Supabase project URL
 
 ## File Structure
 
 ```
-Root
-├── frontend/                          # Next.js application
+├── frontend/
 │   ├── app/
-│   │   ├── dashboard/                 # Admin dashboard with metrics
-│   │   └── page.tsx                   # Main entry point
+│   │   ├── api/chat/route.ts           # AI SDK endpoint (Vercel AI SDK)
+│   │   └── dashboard/page.tsx          # Main dashboard
+│   ├── components/
+│   │   ├── ChatVisualization.tsx        # 3-phase animated conversation
+│   │   ├── CompatibilityBreakdown.tsx   # Side-by-side preference comparison
+│   │   ├── FruitProfileCard.tsx         # Visual attribute card
+│   │   ├── FruitPoolExplorer.tsx        # Browse all fruits
+│   │   ├── ForwardReverseScatter.tsx    # Bidirectional scoring chart
+│   │   ├── ScoreDistribution.tsx        # Quality bucket histogram
+│   │   ├── MetricsPanel.tsx             # 6 KPI cards
+│   │   ├── RecentMatches.tsx            # Match history list
+│   │   └── BootstrapOverlay.tsx         # Auto-initialization
 │   └── lib/
-│       ├── store.ts                   # Zustand state management
-│       └── utils.ts                   # Utility functions
+│       ├── api.ts                       # Edge function client (uses Effect)
+│       ├── store.ts                     # Zustand state management
+│       └── utils.ts                     # Effect utilities + helpers
 │
-├── supabase/
-│   ├── config.toml                    # Supabase local configuration
-│   └── functions/
-│       ├── _shared/
-│       │   ├── generateFruit.ts       # Fruit generation & communication
-│       │   ├── generateFruit.test.ts  # Deno tests
-│       │   └── deno.json              # Shared dependencies
-│       ├── get-incoming-apple/
-│       │   ├── index.ts               # Apple edge function
-│       │   └── deno.json
-│       └── get-incoming-orange/
-│           ├── index.ts               # Orange edge function
-│           └── deno.json
+├── supabase/functions/
+│   ├── _shared/
+│   │   ├── generateFruit.ts             # Fruit generation (Box-Muller)
+│   │   ├── matching.ts                  # Weighted bidirectional scoring
+│   │   ├── surrealdb.ts                 # SurrealDB HTTP client
+│   │   └── narrative.ts                 # LLM + template narrative
+│   ├── get-incoming-apple/index.ts
+│   ├── get-incoming-orange/index.ts
+│   └── get-stats/index.ts
 │
-├── data/
-│   ├── README.md                      # Data schema documentation
-│   └── raw_apples_and_oranges.json    # Seed data (40 fruits)
+├── scripts/
+│   ├── seed-surrealdb.ts               # Database seeder
+│   └── serve.ts                        # Standalone dev server
 │
-├── package.json                       # Root dependencies (supabase CLI)
-└── README.md                          # This file
+└── data/
+    └── raw_apples_and_oranges.json     # 40 seed fruits (20 apples + 20 oranges)
 ```
