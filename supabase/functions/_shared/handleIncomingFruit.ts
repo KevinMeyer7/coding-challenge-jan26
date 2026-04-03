@@ -52,10 +52,9 @@ export function createFruitHandler(type: FruitType) {
       );
       const topMatches = matchResults.slice(0, 3);
 
-      const { narrative, llmUsed } = await generateNarrative({
+      // Template narrative generated here; LLM enhancement happens on frontend via AI SDK
+      const narrative = generateNarrative({
         fruitType: type,
-        attrDescription,
-        prefDescription,
         topMatches,
         candidates: pool,
       });
@@ -96,7 +95,7 @@ export function createFruitHandler(type: FruitType) {
             };
           }),
           narrative,
-          meta: { [searchKey]: pool.length, llmUsed, timestamp: new Date().toISOString() },
+          meta: { [searchKey]: pool.length, timestamp: new Date().toISOString() },
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
       );

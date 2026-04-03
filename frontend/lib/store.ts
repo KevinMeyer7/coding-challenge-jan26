@@ -63,7 +63,7 @@ interface MatchmakingState {
 
 let conversationCounter = 0;
 
-const BOOTSTRAP_SEQUENCE: Array<"apple" | "orange"> = [
+export const BOOTSTRAP_SEQUENCE: Array<"apple" | "orange"> = [
   "apple",
   "orange",
   "apple",

@@ -63,7 +63,7 @@ export interface ConversationResponse {
   meta: {
     totalOrangesSearched?: number;
     totalApplesSearched?: number;
-    llmUsed: boolean;
+    llmUsed?: boolean;
     timestamp: string;
   };
 }
@@ -111,10 +111,9 @@ export interface PoolFruit {
 }
 
 /**
- * API calls use Effect for typed error handling with retry and timeout.
- * Uses Effect for typed error handling with automatic retry on failure.
+ * Edge function calls wrapped in Effect for retry + typed error handling.
  */
-import { fetchJsonWithRetry, FetchError, ApiError, runEffectOr } from "./utils";
+import { fetchJsonWithRetry, FetchError, ApiError } from "./utils";
 import { Effect } from "effect";
 
 async function callEdgeFunction<T>(path: string, body: unknown = {}): Promise<T> {

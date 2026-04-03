@@ -2,9 +2,7 @@
 
 import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useMatchmakingStore } from "@/lib/store";
-
-const BOOTSTRAP_TOTAL = 5; // matches store.ts BOOTSTRAP_SEQUENCE length
+import { useMatchmakingStore, BOOTSTRAP_SEQUENCE } from "@/lib/store";
 
 /**
  * On first load, if no matches exist, auto-runs a sequence of matchmaking
@@ -34,7 +32,7 @@ export function BootstrapOverlay() {
   if (bootstrapState !== "running") return null;
 
   const currentStep = bootstrapProgress;
-  const total = BOOTSTRAP_TOTAL;
+  const total = BOOTSTRAP_SEQUENCE.length;
   const currentType = currentStep % 2 === 0 ? "apple" : "orange";
   const emoji = currentType === "apple" ? "🍎" : "🍊";
   const pct = total > 0 ? Math.round((currentStep / total) * 100) : 0;
