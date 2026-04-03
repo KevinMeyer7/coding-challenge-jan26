@@ -26,7 +26,8 @@ export function formatDate(date: Date | string): string {
 }
 
 /**
- * Formats a relative time (e.g., "2 minutes ago")
+ * Formats a relative time (e.g., "2 minutes ago").
+ * NOTE: Uses client-local time; only call from client components.
  */
 export function formatRelativeTime(date: Date | string): string {
   const d = typeof date === "string" ? new Date(date) : date;
@@ -51,19 +52,12 @@ export function cn(...classes: (string | undefined | null | false)[]): string {
   return classes.filter(Boolean).join(" ");
 }
 
-/**
- * Delays execution for a given number of milliseconds
- */
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 // =============================================================================
-// EFFECT - PRACTICAL UTILITIES
+// EFFECT - TYPED FETCH UTILITIES
 // =============================================================================
 
 /**
- * Error types for API calls
+ * Error types for Effect-based API calls
  */
 export class FetchError {
   readonly _tag = "FetchError";
@@ -82,7 +76,7 @@ export class ApiError {
 }
 
 /**
- * Fetches JSON from a URL with typed error handling.
+ * Fetches JSON from a URL with typed error handling via Effect.
  *
  * @example
  * ```ts
@@ -114,7 +108,7 @@ export const fetchJson = <T>(
   );
 
 /**
- * Fetches JSON with automatic retry (useful for flaky edge functions).
+ * Fetches JSON with automatic exponential backoff retry.
  */
 export const fetchJsonWithRetry = <T>(
   url: string,

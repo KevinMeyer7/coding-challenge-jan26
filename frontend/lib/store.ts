@@ -1,178 +1,286 @@
+"use client";
+
 import { create } from "zustand";
-import { devtools, persist } from "zustand/middleware";
+import { devtools } from "zustand/middleware";
+import type { ConversationResponse, StatsResponse, MatchData } from "./api";
+import {
+  startAppleConversation,
+  startOrangeConversation,
+  fetchStats,
+} from "./api";
 
-// =============================================================================
-// ⚠️  DISCLAIMER
-// =============================================================================
-// This store structure is just a STARTING POINT. Feel free to:
-// - Completely redesign the state shape
-// - Remove types/fields that don't fit your solution
-// - Add your own types and actions
-// - Use a different state management approach entirely
-//
-// The types below are examples based on what we imagined - your implementation
-// may look completely different, and that's great!
-// =============================================================================
-
-// =============================================================================
-// TYPES (Examples - modify or replace these!)
-// =============================================================================
-
-export interface Apple {
-  id: string;
-  name: string;
-  attributes: Record<string, unknown>;
-  preferences: Record<string, unknown>;
-  createdAt: Date;
-}
-
-export interface Orange {
-  id: string;
-  name: string;
-  attributes: Record<string, unknown>;
-  preferences: Record<string, unknown>;
-  createdAt: Date;
-}
-
-export interface Match {
-  id: string;
-  appleId: string;
-  orangeId: string;
-  score: number;
-  status: "pending" | "confirmed" | "rejected";
-  createdAt: Date;
-}
-
-export interface Conversation {
+export interface ConversationEntry {
   id: string;
   type: "apple" | "orange";
-  fruitId: string;
-  messages: ConversationMessage[];
-  status: "active" | "completed" | "error";
-  createdAt: Date;
+  response: ConversationResponse | null;
+  timestamp: string;
+  status: "loading" | "complete" | "error";
+  error?: string;
 }
 
-export interface ConversationMessage {
+export type ChatMessageType =
+  | "system"
+  | "fruit-text"
+  | "fruit-card"
+  | "match-candidates"
+  | "match-result"
+  | "narrative";
+
+export interface ChatMessage {
   id: string;
-  role: "system" | "user" | "assistant";
+  conversationId: string;
+  role: "system" | "fruit" | "matchmaker";
+  type: ChatMessageType;
   content: string;
-  timestamp: Date;
+  timestamp: string;
+  fruitType?: "apple" | "orange";
+  /** Structured data for rich message types */
+  data?: {
+    fruitAttributes?: Record<string, unknown>;
+    fruitPreferences?: Record<string, unknown>;
+    matches?: MatchData[];
+    bestMatch?: MatchData;
+    mutualScore?: number;
+  };
 }
-
-// =============================================================================
-// STORE STATE
-// =============================================================================
 
 interface MatchmakingState {
-  // Data
-  apples: Apple[];
-  oranges: Orange[];
-  matches: Match[];
-  conversations: Conversation[];
-
-  // UI State
+  conversations: ConversationEntry[];
   activeConversationId: string | null;
+  stats: StatsResponse | null;
+  statsLoading: boolean;
   isLoading: boolean;
   error: string | null;
+  bootstrapState: "idle" | "running" | "done";
+  bootstrapProgress: number;
 
-  // Actions
-  setApples: (apples: Apple[]) => void;
-  setOranges: (oranges: Orange[]) => void;
-  addMatch: (match: Match) => void;
+  startConversation: (type: "apple" | "orange") => Promise<void>;
   setActiveConversation: (id: string | null) => void;
-  addConversation: (conversation: Conversation) => void;
-  addMessageToConversation: (
-    conversationId: string,
-    message: ConversationMessage
-  ) => void;
-  setLoading: (isLoading: boolean) => void;
-  setError: (error: string | null) => void;
-  reset: () => void;
+  refreshStats: () => Promise<void>;
+  runBootstrap: () => Promise<void>;
+  clearError: () => void;
 }
 
-// =============================================================================
-// INITIAL STATE
-// =============================================================================
+let conversationCounter = 0;
 
-const initialState = {
-  apples: [],
-  oranges: [],
-  matches: [],
-  conversations: [],
-  activeConversationId: null,
-  isLoading: false,
-  error: null,
-};
-
-// =============================================================================
-// STORE
-// =============================================================================
+const BOOTSTRAP_SEQUENCE: Array<"apple" | "orange"> = [
+  "apple",
+  "orange",
+  "apple",
+  "orange",
+  "apple",
+];
 
 export const useMatchmakingStore = create<MatchmakingState>()(
   devtools(
-    persist(
-      (set) => ({
-        ...initialState,
+    (set, get) => ({
+      conversations: [],
+      activeConversationId: null,
+      stats: null,
+      statsLoading: false,
+      isLoading: false,
+      error: null,
+      bootstrapState: "idle",
+      bootstrapProgress: 0,
 
-        setApples: (apples) => set({ apples }),
+      startConversation: async (type) => {
+        const id = `conv-${Date.now()}-${++conversationCounter}`;
+        const entry: ConversationEntry = {
+          id,
+          type,
+          response: null,
+          timestamp: new Date().toISOString(),
+          status: "loading",
+        };
 
-        setOranges: (oranges) => set({ oranges }),
+        set((state) => ({
+          conversations: [entry, ...state.conversations],
+          activeConversationId: id,
+          isLoading: true,
+          error: null,
+        }));
 
-        addMatch: (match) =>
+        try {
+          const response =
+            type === "apple"
+              ? await startAppleConversation()
+              : await startOrangeConversation();
+
           set((state) => ({
-            matches: [...state.matches, match],
-          })),
-
-        setActiveConversation: (id) => set({ activeConversationId: id }),
-
-        addConversation: (conversation) =>
-          set((state) => ({
-            conversations: [...state.conversations, conversation],
-          })),
-
-        addMessageToConversation: (conversationId, message) =>
-          set((state) => ({
-            conversations: state.conversations.map((conv) =>
-              conv.id === conversationId
-                ? { ...conv, messages: [...conv.messages, message] }
-                : conv
+            conversations: state.conversations.map((c) =>
+              c.id === id ? { ...c, response, status: "complete" as const } : c
             ),
-          })),
+            isLoading: false,
+          }));
 
-        setLoading: (isLoading) => set({ isLoading }),
+          get().refreshStats();
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : "Unknown error";
+          set((state) => ({
+            conversations: state.conversations.map((c) =>
+              c.id === id
+                ? { ...c, status: "error" as const, error: message }
+                : c
+            ),
+            isLoading: false,
+            error: message,
+          }));
+        }
+      },
 
-        setError: (error) => set({ error }),
+      setActiveConversation: (id) => set({ activeConversationId: id }),
 
-        reset: () => set(initialState),
-      }),
-      {
-        name: "matchmaking-storage",
-        // Only persist specific fields
-        partialize: (state) => ({
-          conversations: state.conversations,
-          matches: state.matches,
-        }),
-      }
-    ),
+      refreshStats: async () => {
+        if (get().statsLoading) return;
+        set({ statsLoading: true });
+        try {
+          const stats = await fetchStats();
+          set({ stats, statsLoading: false });
+        } catch (err) {
+          console.error("Failed to refresh stats:", err);
+          set({ statsLoading: false });
+        }
+      },
+
+      runBootstrap: async () => {
+        set({ bootstrapState: "running", bootstrapProgress: 0 });
+        for (let i = 0; i < BOOTSTRAP_SEQUENCE.length; i++) {
+          set({ bootstrapProgress: i });
+          try {
+            await get().startConversation(BOOTSTRAP_SEQUENCE[i]);
+            // Small delay between conversations for visual effect
+            await new Promise((r) => setTimeout(r, 300));
+          } catch {
+            // Continue even if one fails
+          }
+        }
+        set({ bootstrapState: "done", bootstrapProgress: BOOTSTRAP_SEQUENCE.length });
+        get().refreshStats();
+      },
+
+      clearError: () => set({ error: null }),
+    }),
     { name: "MatchmakingStore" }
   )
 );
 
-// =============================================================================
-// SELECTORS
-// =============================================================================
+/**
+ * Convert a completed conversation into a sequence of rich chat messages.
+ */
+export function conversationToChatMessages(
+  entry: ConversationEntry
+): ChatMessage[] {
+  if (!entry.response || entry.status !== "complete") return [];
 
-// Example selectors for computed values
+  const messages: ChatMessage[] = [];
+  const { response } = entry;
+  const otherType = response.fruit.type === "apple" ? "oranges" : "apples";
+
+  // System: arrival
+  messages.push({
+    id: `${entry.id}-sys-1`,
+    conversationId: entry.id,
+    role: "system",
+    type: "system",
+    content: `A new ${response.fruit.type} has arrived at the matchmaking booth!`,
+    timestamp: entry.timestamp,
+  });
+
+  // Fruit: introduces itself (text)
+  messages.push({
+    id: `${entry.id}-fruit-attrs`,
+    conversationId: entry.id,
+    role: "fruit",
+    type: "fruit-text",
+    content: response.communication.attributes,
+    timestamp: entry.timestamp,
+    fruitType: response.fruit.type,
+  });
+
+  // Fruit: profile card (structured data)
+  messages.push({
+    id: `${entry.id}-fruit-card`,
+    conversationId: entry.id,
+    role: "fruit",
+    type: "fruit-card",
+    content: "",
+    timestamp: entry.timestamp,
+    fruitType: response.fruit.type,
+    data: {
+      fruitAttributes: response.fruit.attributes as unknown as Record<string, unknown>,
+      fruitPreferences: response.fruit.preferences,
+    },
+  });
+
+  // Fruit: preferences (text)
+  messages.push({
+    id: `${entry.id}-fruit-prefs`,
+    conversationId: entry.id,
+    role: "fruit",
+    type: "fruit-text",
+    content: response.communication.preferences,
+    timestamp: entry.timestamp,
+    fruitType: response.fruit.type,
+  });
+
+  // System: searching
+  const searchCount =
+    response.meta.totalOrangesSearched ?? response.meta.totalApplesSearched ?? 0;
+  messages.push({
+    id: `${entry.id}-sys-search`,
+    conversationId: entry.id,
+    role: "system",
+    type: "system",
+    content: `Searching through ${searchCount} ${otherType} for compatible matches...`,
+    timestamp: entry.timestamp,
+  });
+
+  // Matchmaker: top candidates
+  if (response.matches.length > 0) {
+    messages.push({
+      id: `${entry.id}-candidates`,
+      conversationId: entry.id,
+      role: "matchmaker",
+      type: "match-candidates",
+      content: `Found ${response.matches.length} potential match${response.matches.length > 1 ? "es" : ""}!`,
+      timestamp: entry.timestamp,
+      data: { matches: response.matches },
+    });
+
+    // Matchmaker: best match result
+    const best = response.matches[0];
+    messages.push({
+      id: `${entry.id}-result`,
+      conversationId: entry.id,
+      role: "matchmaker",
+      type: "match-result",
+      content: "",
+      timestamp: entry.timestamp,
+      data: {
+        bestMatch: best,
+        fruitAttributes: response.fruit.attributes as unknown as Record<string, unknown>,
+        mutualScore: best.mutualScore,
+      },
+    });
+  }
+
+  // Matchmaker: narrative
+  messages.push({
+    id: `${entry.id}-narrative`,
+    conversationId: entry.id,
+    role: "matchmaker",
+    type: "narrative",
+    content: response.narrative,
+    timestamp: entry.timestamp,
+  });
+
+  return messages;
+}
+
+// Selectors
 export const selectActiveConversation = (state: MatchmakingState) =>
   state.conversations.find((c) => c.id === state.activeConversationId);
 
-export const selectMatchCount = (state: MatchmakingState) =>
-  state.matches.length;
-
-export const selectSuccessRate = (state: MatchmakingState) => {
-  const confirmed = state.matches.filter((m) => m.status === "confirmed").length;
-  return state.matches.length > 0
-    ? Math.round((confirmed / state.matches.length) * 100)
-    : 0;
-};
-
+export const selectCompletedConversations = (state: MatchmakingState) =>
+  state.conversations.filter((c) => c.status === "complete");
