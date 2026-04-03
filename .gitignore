@@ -47,3 +47,4 @@ coverage/
 *.log
 .vercel
 
+INTERVIEW_PREP.*
