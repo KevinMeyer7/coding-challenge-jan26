@@ -1,50 +1,112 @@
-// Setup type definitions for built-in Supabase Runtime APIs
 import "@supabase/functions-js/edge-runtime.d.ts";
 import { generateOrange, communicateAttributes, communicatePreferences } from "../_shared/generateFruit.ts";
+import type { FruitAttributes, FruitPreferences } from "../_shared/generateFruit.ts";
+import { storeFruit, getFruits, storeMatch } from "../_shared/surrealdb.ts";
+import { calculateMatches } from "../_shared/matching.ts";
+import type { MatchCandidate } from "../_shared/matching.ts";
+import { generateNarrative, truncateNarrative } from "../_shared/narrative.ts";
 
-/**
- * Get Incoming Orange Edge Function
- *
- * Task Flow:
- * 1. Generate a new orange instance
- * 2. Capture the new orange's communication (attributes and preferences)
- * 3. Store the new orange in SurrealDB
- * 4. Match the new orange to existing apples
- * 5. Communicate matching results back to the orange via LLM
- */
+const ALLOWED_ORIGIN = Deno.env.get("ALLOWED_ORIGIN") || "http://localhost:3000";
 
-// CORS headers for local development
 const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 Deno.serve(async (req) => {
-  // Handle CORS preflight requests
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
+  if (req.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405, headers: corsHeaders });
+  }
+
   try {
-    // Step 1: Generate a new orange instance
+    // Step 1: Generate a new orange
     const orange = generateOrange();
 
-    // Step 2: Capture the orange's communication
-    // The orange expresses its attributes and preferences
-    const orangeAttrs = communicateAttributes(orange);
-    const orangePrefs = communicatePreferences(orange);
+    // Step 2: Capture communication
+    const attrDescription = communicateAttributes(orange);
+    const prefDescription = communicatePreferences(orange);
 
-    // Step 3: Store the new orange in SurrealDB
-    // TODO: Implement orange storage logic
+    // Step 3: Store in SurrealDB
+    const stored = await storeFruit({
+      type: "orange",
+      attributes: orange.attributes as unknown as Record<string, unknown>,
+      preferences: orange.preferences as unknown as Record<string, unknown>,
+      attributeDescription: attrDescription,
+      preferenceDescription: prefDescription,
+    });
 
-    // Step 4: Match the new orange to existing apples
-    // TODO: Implement orange matching logic
+    // Step 4: Match against existing apples
+    const apples = await getFruits("apple");
+    const candidates: MatchCandidate[] = apples.map((a) => ({
+      id: a.id,
+      attributes: a.attributes as unknown as FruitAttributes,
+      preferences: a.preferences as unknown as FruitPreferences,
+    }));
 
-    // Step 5: Communicate matching results via LLM
-    // TODO: Implement matching results communication logic
+    const matchResults = calculateMatches(
+      { attributes: orange.attributes, preferences: orange.preferences },
+      candidates
+    );
+    const topMatches = matchResults.slice(0, 3);
 
-    return new Response(JSON.stringify({ message: "Orange received" }), {
+    // Step 5: Generate narrative
+    const { narrative: matchNarrative, llmUsed } = await generateNarrative({
+      fruitType: "orange",
+      attrDescription,
+      prefDescription,
+      topMatches,
+      candidates: apples,
+    });
+
+    // Store the best match (note: apple is the candidate here, orange is incoming)
+    if (topMatches.length > 0) {
+      const best = topMatches[0];
+      await storeMatch({
+        appleId: best.candidateId,
+        orangeId: stored.id,
+        appleToOrangeScore: best.reverseScore,
+        orangeToAppleScore: best.forwardScore,
+        mutualScore: best.mutualScore,
+        explanation: truncateNarrative(matchNarrative, 500),
+      });
+    }
+
+    const response = {
+      fruit: {
+        id: stored.id,
+        type: "orange",
+        attributes: orange.attributes,
+        preferences: orange.preferences,
+      },
+      communication: {
+        attributes: attrDescription,
+        preferences: prefDescription,
+      },
+      matches: topMatches.map((m) => {
+        const apple = apples.find((a) => a.id === m.candidateId);
+        return {
+          appleId: m.candidateId,
+          forwardScore: m.forwardScore,
+          reverseScore: m.reverseScore,
+          mutualScore: m.mutualScore,
+          appleAttributes: apple?.attributes,
+          appleAttributeDescription: apple?.attributeDescription,
+          breakdown: m.breakdown.slice(0, 10),
+        };
+      }),
+      narrative: matchNarrative,
+      meta: {
+        totalApplesSearched: apples.length,
+        llmUsed,
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    return new Response(JSON.stringify(response), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
     });

@@ -181,13 +181,13 @@ function generateAttributes(type: FruitType): FruitAttributes {
 function generatePreferences(attributes: FruitAttributes): FruitPreferences {
   const preferences: FruitPreferences = {};
 
-  // ~40% chance to have a size preference (generous range)
-  if (randomChance(0.4) && attributes.size !== null) {
-    const margin = randomNormalClamped(2.5, 1.0, 1.5, 5.0);
+  // ~75% chance to have a size preference (tight range for interesting matching)
+  if (randomChance(0.75) && attributes.size !== null) {
+    const margin = randomNormalClamped(1.2, 0.5, 0.5, 2.0);
     const preferredSize = attributes.size + randomNormal(0, 1);
 
-    // Sometimes only min, sometimes only max, sometimes both
-    const rangeType = randomPick(["both", "min", "max"]);
+    // Usually both min and max for a tight window
+    const rangeType = randomPick(["both", "both", "both", "min", "max"]);
     if (rangeType === "both" || rangeType === "min") {
       preferences.size = {
         ...preferences.size,
@@ -202,12 +202,12 @@ function generatePreferences(attributes: FruitAttributes): FruitPreferences {
     }
   }
 
-  // ~35% chance to have a weight preference (generous range)
-  if (randomChance(0.35) && attributes.weight !== null) {
-    const margin = randomNormalClamped(40, 15, 20, 80);
+  // ~70% chance to have a weight preference (tight range)
+  if (randomChance(0.70) && attributes.weight !== null) {
+    const margin = randomNormalClamped(20, 8, 10, 35);
     const preferredWeight = attributes.weight + randomNormal(0, 20);
 
-    const rangeType = randomPick(["both", "min", "max"]);
+    const rangeType = randomPick(["both", "both", "both", "min", "max"]);
     if (rangeType === "both" || rangeType === "min") {
       preferences.weight = {
         ...preferences.weight,
@@ -222,24 +222,24 @@ function generatePreferences(attributes: FruitAttributes): FruitPreferences {
     }
   }
 
-  // ~25% chance to care about stem
-  if (randomChance(0.25)) {
+  // ~50% chance to care about stem
+  if (randomChance(0.5)) {
     preferences.hasStem = randomChance(0.6); // Slight preference for stems
   }
 
-  // ~20% chance to care about leaf
-  if (randomChance(0.2)) {
+  // ~40% chance to care about leaf
+  if (randomChance(0.4)) {
     preferences.hasLeaf = randomChance(0.5);
   }
 
-  // ~60% chance to not want a worm (common preference)
-  if (randomChance(0.6)) {
+  // ~80% chance to not want a worm (common dealbreaker)
+  if (randomChance(0.8)) {
     preferences.hasWorm = false;
   }
 
-  // ~45% chance to have shine preference (often multiple acceptable values)
-  if (randomChance(0.45)) {
-    const numAcceptable = randomPick([1, 2, 2, 3]); // Usually 2 acceptable values
+  // ~65% chance to have shine preference
+  if (randomChance(0.65)) {
+    const numAcceptable = randomPick([1, 1, 2]); // Often just 1 acceptable value — pickier
     if (numAcceptable === 1) {
       preferences.shineFactor = randomPick(SHINE_FACTORS);
     } else {
@@ -247,8 +247,8 @@ function generatePreferences(attributes: FruitAttributes): FruitPreferences {
     }
   }
 
-  // ~40% chance to prefer no chemicals
-  if (randomChance(0.4)) {
+  // ~60% chance to prefer no chemicals
+  if (randomChance(0.6)) {
     preferences.hasChemicals = randomChance(0.2); // Most prefer no chemicals
   }
 
